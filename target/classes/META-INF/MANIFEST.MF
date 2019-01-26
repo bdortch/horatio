@@ -1,0 +1,8 @@
+Manifest-Version: 1.0
+Built-By: billd
+Class-Path: velocity-1.7.jar commons-collections-3.2.1.jar commons-lan
+ g-2.4.jar
+Build-Jdk: 1.8.0_192
+Created-By: Maven Integration for Eclipse
+Main-Class: org.runningreds.horatio.Horatio
+

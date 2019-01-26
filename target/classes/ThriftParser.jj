@@ -1,0 +1,920 @@
+/**
+ *  Copyright 2011, 2012 Bill Dortch / RunningReds.org
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ */
+
+/*
+ * A JavaCC grammar for Thrift/Horatio
+ *
+ */
+ 
+ 
+options {
+   STATIC = false;
+   FORCE_LA_CHECK=true;
+}
+ 
+PARSER_BEGIN(ThriftParser)
+ 
+package org.runningreds.horatio.parser.thrift;
+ 
+import java.io.*;
+import java.util.*;
+ 
+import org.runningreds.horatio.*;
+import org.runningreds.horatio.parser.*;
+import org.runningreds.horatio.model.*;
+ 
+public class ThriftParser {
+  
+    private volatile ModelSet modelSet;
+    private volatile ThriftModel model;
+    
+    
+    // these are mainly used to give better error positions
+    private Token nameToken, valueToken, typeToken;
+    // allows struct members to reference struct (non-standard, not supported by Thrift proper)
+    private StructType currStruct;
+    // holds docComments for most recently parsed field id
+    private List<String> fieldIdComments;
+    
+    
+    public ThriftParser(ModelSet modelSet, String name, Reader reader) {
+        this(reader);
+        createModel(modelSet, name);
+    }
+    
+    public ThriftParser(ModelSet modelSet, String name, InputStream stream) {
+        this(stream);
+        createModel(modelSet, name);
+    }
+
+    public ThriftParser(ModelSet modelSet, String name, InputStream stream, String encoding) {
+        this(stream, encoding);
+        createModel(modelSet, name);
+    }
+    
+    private void createModel(ModelSet modelSet, String name) {
+        if (modelSet == null) {
+            modelSet = new ModelSet();
+        }
+        this.modelSet = modelSet;
+        this.model = modelSet.createModel(name);
+    }
+    
+    public ModelSet getModelSet() {
+        return modelSet;
+    }
+
+    static String tokenLoc(Token t) {
+        if (t == null) {
+            return "";
+        } else {
+            return " at line " + t.beginLine + ", column " + t.beginColumn;
+        }
+    }
+    
+    static List<String> docComments(Token t) {
+        if (t.specialToken != null && t.specialToken.image.startsWith("/**")) {
+            return ParseUtil.parseDocComments(t.specialToken.image);
+        }
+        return null;
+    }
+    
+}
+ 
+PARSER_END(ThriftParser)
+ 
+/* WHITE SPACE */
+
+SKIP :
+{
+  " "
+| "\t"
+| "\n"
+| "\r"
+| "\f"
+}
+
+/* COMMENTS */
+
+MORE :
+{
+  "//" : IN_SINGLE_LINE_COMMENT
+| "#"  : IN_SINGLE_LINE_COMMENT
+| "/*" : IN_MULTI_LINE_COMMENT
+}
+
+<IN_SINGLE_LINE_COMMENT>
+SPECIAL_TOKEN :
+{
+  <SINGLE_LINE_COMMENT: "\n" | "\r" | "\r\n" > : DEFAULT
+}
+
+<IN_MULTI_LINE_COMMENT>
+SPECIAL_TOKEN :
+{
+  <MULTI_LINE_COMMENT: "*/" > : DEFAULT
+}
+
+<IN_SINGLE_LINE_COMMENT,IN_MULTI_LINE_COMMENT>
+MORE :
+{
+  < ~[] >
+}
+
+TOKEN : /* LITERALS */
+{
+  < NAMESPACE: "namespace" >
+| < INCLUDE: "include" >
+| < BOOL: "bool" >
+| < BYTE: "byte" >
+| < I16: "i16" >
+| < I32: "i32" >
+| < I64: "i64" >
+| < DOUBLE: "double" >
+| < STRING: "string" >
+| < BINARY: "binary" >
+| < SLIST: "slist" >
+| < SENUM: "senum" >
+| < MAP: "map" >
+| < LIST: "list" >
+| < SET: "set" >
+| < VOID: "void" >
+| < ONEWAY: "oneway" | "async" >
+| < TYPEDEF: "typedef" >
+| < STRUCT: "struct" >
+| < UNION: "union" >
+| < EXCEPTION: "exception" >
+| < EXTENDS: "extends" >
+| < THROWS: "throws" >
+| < SERVICE: "service" >
+| < ENUM: "enum" >
+| < CONST: "const" >
+| < REQUIRED: "required" >
+| < OPTIONAL: "optional" >
+| < TRUE: "true" >
+| < FALSE: "false" >
+| < NULL: "null" >
+| < RESERVED:
+      "foo"
+    | "bar"
+  >
+| < EXTSTR: "#:ExtendStruct" >
+}
+ 
+/* LITERALS */
+
+TOKEN :
+{
+  < INT_VAL:
+        <DEC_VAL> (["l","L"])?
+      | <HEX_VAL> (["l","L"])?
+      | "0"
+  >
+|
+  < #DEC_VAL: ("-")? ["1"-"9"] (["0"-"9"])* >
+|
+  < #HEX_VAL: "0" ["x","X"] (["0"-"9","a"-"f","A"-"F"])+ >
+|
+  < FLOAT_VAL:
+       ("-")? (["0"-"9"])+ "." (["0"-"9"])* (<EXPONENT>)? (["f","F","d","D"])?
+      | "." (["0"-"9"])+ (<EXPONENT>)? (["f","F","d","D"])?
+      | (["0"-"9"])+ <EXPONENT> (["f","F","d","D"])?
+      | (["0"-"9"])+ (<EXPONENT>)? ["f","F","d","D"]
+  >
+|
+  < #EXPONENT: ["e","E"] (["+","-"])? (["0"-"9"])+ >
+|
+  < CHAR_VAL:
+      "'"
+      (   (~["'","\\","\n","\r"])
+        | ("\\"
+            ( ["n","t","b","r","f","\\","'","\""]
+            | ["0"-"7"] ( ["0"-"7"] )?
+            | ["0"-"3"] ["0"-"7"] ["0"-"7"]
+            )
+          )
+      )
+      "'"
+  >
+|
+  < STRING_VAL:
+      "\""
+      (   (~["\"","\\","\n","\r"])
+        | ("\\"
+            ( ["n","t","b","r","f","\\","'","\""]
+//            | ["0"-"7"] ( ["0"-"7"] )?
+//            | ["0"-"3"] ["0"-"7"] ["0"-"7"]
+            )
+          )
+      )*
+      "\""
+  >
+}
+ 
+/* IDENTIFIERS */
+
+TOKEN :
+{
+  < IDENTIFIER: <LETTER> (<LETTER>|<DIGIT>)* >
+|
+  < #LETTER: ["_", "A"-"Z", "a"-"z"] >
+|
+  < #DIGIT: ["0"-"9"] >
+}
+
+/* SEPARATORS */
+
+TOKEN :
+{
+  < LPAREN: "(" >
+| < RPAREN: ")" >
+| < LBRACE: "{" >
+| < RBRACE: "}" >
+| < LBRACKET: "[" >
+| < RBRACKET: "]" >
+| < SEMICOLON: ";" >
+| < COMMA: "," >
+| < DOT: "." >
+}
+
+/* OPERATORS */
+
+TOKEN :
+{
+  < ASSIGN: "=" >
+| < LT: "<" >
+| < BANG: "!" >
+| < TILDE: "~" >
+| < HOOK: "?" >
+| < COLON: ":" >
+| < EQ: "==" >
+| < LE: "<=" >
+| < GE: ">=" >
+| < NE: "!=" >
+| < SC_OR: "||" >
+| < SC_AND: "&&" >
+| < INCR: "++" >
+| < DECR: "--" >
+| < PLUS: "+" >
+| < MINUS: "-" >
+| < STAR: "*" >
+| < SLASH: "/" >
+| < BIT_AND: "&" >
+| < BIT_OR: "|" >
+| < XOR: "^" >
+| < REM: "%" >
+| < LSHIFT: "<<" >
+| < PLUSASSIGN: "+=" >
+| < MINUSASSIGN: "-=" >
+| < STARASSIGN: "*=" >
+| < SLASHASSIGN: "/=" >
+| < ANDASSIGN: "&=" >
+| < ORASSIGN: "|=" >
+| < XORASSIGN: "^=" >
+| < REMASSIGN: "%=" >
+| < LSHIFTASSIGN: "<<=" >
+| < RSIGNEDSHIFTASSIGN: ">>=" >
+| < RUNSIGNEDSHIFTASSIGN: ">>>=" >
+| < ELLIPSIS: "..." >
+}
+
+// FIXME: see Java 1.5 grammar for handling generics/rshift collision
+
+
+ThriftModel Model() :
+{}
+{
+  ( 
+    ( NamespaceDef() | IncludeDef() )*
+  
+    ( ConstDef() | TypeDef() | EnumDef() | StructDef() | ExcepDef() | ServiceDef() )*
+    
+    <EOF>
+  )
+  { 
+      return model;
+  }
+}
+void IncludeDef() :
+{
+  Token nameToken = null;
+}
+{
+  ( "include" nameToken=<STRING_VAL> [ EOL() ] )
+  {
+      String includeName = ParseUtil.parseStringLiteral(nameToken.image);
+      String modelName = includeName.endsWith(".thrift") ? includeName.substring(0, includeName.length() - 7) : includeName;
+      if (!modelSet.isModelLoaded(modelName) && modelSet.getModelPath() != null) {
+          try {
+              new ThriftParser(modelSet, modelName, modelSet.getModelPath().getChildRef(includeName)
+                  .getInputStream()).Model();
+          } catch (ModelException e) {
+             throw new ParseException(e.getMessage() + tokenLoc(nameToken));
+          } catch (StringFormatException e) {
+             throw new ParseException(e.getMessage() + tokenLoc(nameToken));
+          } catch (RuntimeException e) {
+             throw new ParseException(e.getMessage() + tokenLoc(nameToken));
+          }
+      }
+  }
+}
+NamespaceDef NamespaceDef() :
+{
+  Token generator = null;
+  String generatorName = null;
+  String namespace;    
+}
+{
+  ( "namespace" ( generator="*" | generatorName=Name()) namespace=Name() [ EOL() ] )
+  {
+      String name = generator == null ? generatorName : generator.image;
+      try {
+          NamespaceDef def = new NamespaceDef(model, name, namespace);
+          model.addNamespace(def);
+          return def;
+      } catch (ModelException e) {
+          throw new ParseException(e.getMessage() + tokenLoc(generator));
+      }
+  }
+}
+ConstDef ConstDef() :
+{
+    Token s;
+    Type type;
+    String name;
+    Object value;
+}
+{
+   ( s="const" type=DataType() name=Name() "=" value=Value() [ EOL() ] )
+   { 
+        ConstDef def;
+        try {
+            def = new ConstDef(model, name, type, value, docComments(s));
+        } catch (ModelException e) {
+             throw new ParseException(e.getMessage() + tokenLoc(valueToken));
+        }
+        try {
+            model.addConst(def);
+        } catch (ModelException e) {
+             throw new ParseException(e.getMessage() + tokenLoc(nameToken));
+        }
+        return def;
+   } 
+}
+void TypeDef() :
+{ 
+    Type type;
+    Token newname;
+}
+{
+   "typedef" type=DataType() newname=<IDENTIFIER>
+   {
+        try {
+            modelSet.registerType(model.qname(newname.image), type);
+        } catch (ModelException e) {
+            throw new ParseException(e.getMessage() + tokenLoc(newname));
+        }
+   }
+}
+EnumType EnumDef() :
+{
+   Token s;
+   EnumType def;
+   Token enumName;
+   Token elemName;
+   Token elemVal = null;
+}
+{
+   s="enum"  enumName=<IDENTIFIER>  "{"
+   { def = new EnumType(model, enumName.image, docComments(s)); }
+   ( 
+       ( elemName=<IDENTIFIER>  [ "="  elemVal=<INT_VAL> ] [ EOL() ] )
+       {
+		    try {
+		       if (elemVal == null) {
+		           def.addElem(elemName.image);
+		       } else {
+		           def.addElem(elemName.image, Integer.parseInt(elemVal.image));
+		           elemVal = null;
+		       }
+		    } catch (ModelException e) {
+		        throw new ParseException(e.getMessage() + tokenLoc(elemName));
+		    }
+       } 
+   )+
+  "}"
+   {
+       try {
+           model.addEnum(def);
+       } catch (ModelException e) {
+          throw new ParseException(e.getMessage() + tokenLoc(enumName));
+       }
+       return def;
+   }
+}
+
+StructType StructDef() :
+{
+    Token s, name;
+    StructType struct;
+    FieldDef field;
+}
+{
+   ( ( s="struct" | s="union" )  name=<IDENTIFIER>  "{" )
+   {
+       currStruct = struct = new StructType(model, name.image, s.kind == UNION, docComments(s));
+   }
+   ( 
+      ( field=FieldDef() )
+      {
+          try {
+              struct.addField(field);
+          } catch (ModelException e) {
+              throw new ParseException(e.getMessage() + tokenLoc(name));
+          }
+      }
+   )*
+  "}"
+  {
+      try {
+          model.addStruct(struct);
+      } catch (ModelException e) {
+          throw new ParseException(e.getMessage() + tokenLoc(name));
+      }
+      currStruct = null;
+      return struct;
+  }
+}
+ExceptionType ExcepDef() :
+{
+    Token s;
+    Token t = null;
+    ExceptionType excep;
+    FieldDef field;
+}
+{
+   ( s="exception"  t=<IDENTIFIER>  "{" )
+   {
+       excep = new ExceptionType(model, t.image, docComments(s));
+   }
+   ( 
+      ( field=FieldDef() )
+      {
+          try {
+              excep.addField(field);
+          } catch (ModelException e) {
+              throw new ParseException(e.getMessage() + tokenLoc(t));
+          }
+      }
+   )*
+  "}"
+  {
+      try {
+          model.addException(excep);
+      } catch (ModelException e) {
+          throw new ParseException(e.getMessage() + tokenLoc(t));
+      }
+      return excep;
+  }
+}
+
+ServiceDef ServiceDef() :
+{
+    Token s, svcName;
+    String supName = null;
+    ServiceDef service;
+    Token oneway = null;
+    Object type;
+    Token funcName;
+    FunctionDef func;
+    FieldDef field;
+}
+{
+    ( s="service" svcName=<IDENTIFIER> [ "extends" supName=Name() ] "{" )
+    {
+        ServiceDef supDef;
+        if (supName == null) {
+            supDef = null;
+        } else {
+            try {
+                supDef = model.getService(supName);
+            } catch (ModelException e) {
+                throw new ParseException(e.getMessage() + tokenLoc(nameToken));
+            }
+        }
+        service = new ServiceDef(model, svcName.image, supDef, docComments(s));
+    }
+    (
+        (( [ oneway=<ONEWAY> ] (type=DataType() | type="void") funcName=<IDENTIFIER> "(")
+        {
+            if (type instanceof Token) {
+                type = Type.VOID;
+            }
+            func = new FunctionDef(service, funcName.image, (Type)type, oneway != null);
+            oneway = null; // reset for next func
+        }
+        (
+            ( field=FieldDef() )
+            {
+                try {
+                    func.addField(field);
+                } catch (ModelException e) {
+                    throw new ParseException(e.getMessage() + tokenLoc(nameToken));
+                }
+            }
+        )*
+        ")"
+        [ "throws" "("
+        
+          (
+              ( field=FieldDef() )
+              {
+                  if (!field.getType().isException()) {
+                      throw new ParseException("throws arg is not an exception type: " + field.getType() + tokenLoc(typeToken));
+                  }
+                  try {
+                      func.addThrowsField(field);
+                  } catch (ModelException e) {
+                      throw new ParseException(e.getMessage() + tokenLoc(nameToken));
+                  }
+              }
+          )*
+          ")"
+        ]
+        [ EOL() ])
+        {
+            try {
+                service.addFunction(func);
+            } catch (ModelException e) {
+                throw new ParseException(e.getMessage() + tokenLoc(svcName));
+            }
+        }
+     )*
+    "}"
+    {
+        try {
+            model.addService(service);
+        } catch (ModelException e) {
+            throw new ParseException(e.getMessage() + tokenLoc(svcName));
+        }
+        return service;
+    }
+}
+
+FieldDef FieldDef() :
+{
+  short id;
+  String opt = null;
+  Type type;
+  Token name;
+  Object value = FieldDef.UNSET_VALUE;
+  Map<String,Object> annos = null;
+}
+{
+  ( id=FieldID() [ opt=Optionality() ] type=DataType() name=<IDENTIFIER>  [ "=" value=Value() ] [ annos=Annotations() ] [ EOL() ] )
+  {
+      try {
+          // FIXME: token ID for optional/required?
+          return new FieldDef(id, name.image, type, !"optional".equals(opt), value, annos, fieldIdComments);
+      } catch (Exception e) {
+          // FIXME: token loc for value?
+          throw new ParseException(e.getMessage() + tokenLoc(name));
+      }
+  }
+}
+short FieldID() :
+{
+    short id;
+}
+{
+  ( id=I16Literal() ":" )
+  { 
+     // Horatio does not currently support negative ids
+     if (id < 0) {
+       throw new ParseException("Illegal negative field id (" + id + ")");
+     }
+     fieldIdComments = docComments(valueToken);
+     return id; 
+  }
+}
+String Optionality() :
+{
+   Token opt = null;
+}
+{
+  (opt="required" | opt="optional")
+  { return opt.image; }
+}
+
+Type DataType() :
+{ Type type; }
+{
+  ( type=BuiltinType() | type=ContainerType() | type=UserType() )
+  {
+      return type;
+  }
+}
+Type BuiltinType() :
+{
+  Token t = null;
+}
+{ 
+  (t="bool" | t="byte" | t="i16" | t="i32" | t="i64" | t="double" | t="string" | t="binary")
+  {
+     typeToken = t;
+     return modelSet.getType(t.image);
+  }
+}
+
+Type ContainerType() :
+{ Type type; }
+{
+   ( type=ListType() | type=SetType() | type=MapType() )
+   {
+       return type;
+   }
+}
+MapType MapType() :
+{
+  Type keyType = null;
+  Type valueType = null;
+  Token t;
+}
+{
+  ( t="map" "<" keyType=DataType() "," valueType=DataType() ">")
+  {
+       typeToken = t;
+       return MapType.valueOf(keyType, valueType, modelSet);
+  }
+}
+
+ListType ListType() :
+{ Type elemType = null; Token t;}
+{
+  ( t="list" "<" elemType=DataType() ">")
+  { 
+      typeToken = t;
+      return ListType.valueOf(elemType, modelSet);
+  }
+}
+
+SetType SetType() :
+{ Type elemType = null; Token t; }
+{
+  (t="set" "<" elemType=DataType() ">")
+  { 
+      typeToken = t;
+      return SetType.valueOf(elemType, modelSet);
+  }
+}
+// UserType is either struct or enum or typdef of some other type
+Type UserType() : 
+{ String name; }
+{
+    ( name=Name() )
+    {
+        typeToken = nameToken;
+        Type utype = model.lookupType(name);
+        if (utype == null) {
+            // allow struct member to access struct type 
+            // (non-standard, not currently supported  by Thrift)
+            if (currStruct != null && name.equals(currStruct.getName())) {
+                return currStruct;
+            }
+            throw new ParseException("Unknown type \"" + name + "\"" + tokenLoc(typeToken));
+        }
+        return utype;
+    }
+}
+Object Value() :
+{
+   Object v;
+}
+{
+  ( 
+      v=I64Literal()
+    | v=DoubleLiteral()
+    | v=BoolLiteral()
+    | v=StringLiteral() 
+    | v=CharLiteral()
+    | v=NullLiteral()
+    | v=ListLiteral()
+    | v=MapLiteral()
+    | ( v=Name() )
+      {
+          String name = (String)v;
+          v = model.lookup(name);
+          if (v == null) {
+              throw new  ParseException("Undefined name \"" + name + "\"" + tokenLoc(nameToken));
+          }
+      }
+  )
+  { return v; }
+}
+void EOL() :
+{}
+{
+  ";" | ","
+}
+
+String Name() : 
+{
+    Token seg;
+    StringBuilder name = new  StringBuilder(32);
+    nameToken = null;
+}
+{
+   ( LOOKAHEAD(2) seg=<IDENTIFIER> "." {
+        name.append(seg.image).append('.');
+        if (nameToken==null) nameToken=seg;
+    } )*
+    seg=<IDENTIFIER> {
+        if (nameToken==null)nameToken=seg;
+        return name.length() == 0 ? seg.image : name.append(seg.image).toString();
+    }
+}
+
+Object NullLiteral() :
+{}
+{
+   valueToken="null"  {
+      return null;
+   }
+}
+Boolean BoolLiteral() :
+{}
+{
+      valueToken="true" { return true; }
+    | valueToken="false" { return false; }
+}
+Byte ByteLiteral() :
+{}
+{
+   valueToken=<INT_VAL> {
+      try {
+         return ParseUtil.parseByteLiteral(valueToken.image);
+      } catch (NumberFormatException e) {
+         throw new ParseException(e.getMessage() + tokenLoc(valueToken));
+      }
+   }
+}
+Short I16Literal() :
+{}
+{
+   valueToken=<INT_VAL> {
+      try {
+          return ParseUtil.parseShortLiteral(valueToken.image);
+      } catch (NumberFormatException e) {
+         throw new ParseException(e.getMessage() + tokenLoc(valueToken));
+      }
+   }
+}
+Integer I32Literal() :
+{}
+{
+   valueToken=<INT_VAL> {
+      try {
+         return ParseUtil.parseIntLiteral(valueToken.image);
+      } catch (NumberFormatException e) {
+         throw new ParseException(e.getMessage() + tokenLoc(valueToken));
+      }
+   }
+}
+Long I64Literal() :
+{}
+{
+   valueToken=<INT_VAL> {
+      try {
+         return ParseUtil.parseLongLiteral(valueToken.image);
+      } catch (NumberFormatException e) {
+         throw new ParseException(e.getMessage() + tokenLoc(valueToken));
+      }
+   }
+}
+Double DoubleLiteral() :
+{}
+{
+   valueToken=<FLOAT_VAL> {
+      try {
+         return Double.valueOf(valueToken.image);
+      } catch (NumberFormatException e) {
+         throw new ParseException(e.getMessage() + tokenLoc(valueToken));
+      }
+   }
+}
+List<Object> BinaryLiteral() :
+{
+  Object o;
+  List<Object> charList = new ArrayList<Object>();
+}
+{
+  (    valueToken="{" [
+      ( o=ByteLiteral() | o=CharLiteral() ) {
+         charList.add(o);
+      }
+      (LOOKAHEAD(2) ","
+        ( o=ByteLiteral() | o=CharLiteral() ) {
+            charList.add(o); 
+        }
+      )*
+      ]"}"
+   )
+   { return charList; }}
+String StringLiteral() :
+{}
+{
+    valueToken=<STRING_VAL> {
+       return ParseUtil.parseStringLiteral(valueToken.image);
+    }
+
+}
+Character CharLiteral() :
+{}
+{
+  valueToken=<CHAR_VAL>  {
+     return ParseUtil.parseCharLiteral(valueToken.image);
+  }
+}
+ 
+List<Object> ListLiteral() :
+{
+   List<Object> list = new ArrayList<Object>();
+   Object v;
+}
+{
+  ( valueToken="[" 
+      [ v = Value()  {
+          list.add(v);
+       }
+       ( LOOKAHEAD(2) "," 
+           v = Value() {
+             list.add(v);
+           }
+       )* 
+      ]
+    (LOOKAHEAD(2) "," "]" | "]")
+    )
+    { return list; }
+} 
+
+Map<Object,Object> MapLiteral() :
+{
+    Map<Object,Object> map = new HashMap<Object,Object>();
+    Object k, v;
+}
+{
+   ( valueToken="{" 
+         [
+            ( k = Value() ":" v = Value() ) {
+                map.put(k,v);
+            }
+            ( LOOKAHEAD(2) ","
+              ( k = Value() ":" v = Value() ) {
+                  map.put(k,v); 
+              }
+            )*
+         ]
+    (LOOKAHEAD(2) "," "}" | "}")
+   )
+   { return map; }
+
+}
+Map<String, Object> Annotations() :
+{
+    Map<String,Object> annos = new HashMap<String,Object>();
+    String k;
+    Object v;
+}
+{
+   ( valueToken="(" 
+          (
+              k=Name() "=" v=Value() { annos.put(k, v); }
+              [ EOL() ]
+          )*
+
+      ")"
+   )
+   { return annos; }
+
+}
+void Reserved() :
+{ Token t; }
+{
+  ( t=<RESERVED> )
+  { throw new ParseException("Reserved name \"" + t.image + "\"" + tokenLoc(t)); }
+} 
+ 
+ 

@@ -1,0 +1,220 @@
+/**
+ *  Copyright 2011, 2012 Bill Dortch / RunningReds.org
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ */
+
+/*
+ *
+ * Sample Horatio Genspec (Generator Specification)
+ *
+ */
+
+// note that this file format is a sort of relaxed JSON, with quotes optional in
+// many (but not all) cases. if it doesn't parse, add quotes. also, add commas
+// after all values and containers.
+
+{
+  // global options, params and helpers are passed to all targets/generators,
+  // but may be overridden at the target and generator levels.
+  global:
+  {
+    // options are directives to the generators. global options may be
+    // specified/overridden on the command line. these are standard ones,
+    // but others may be defined as needed. all options are optional, though
+    // you probably won't get far without a model_file. (but note that even
+    // the model_file may be specified at the target or generator level.)
+    options:
+    {
+      // the Thrift IDL file. may be absolute or relative path, or url.
+      // relative path will be appended to CWD. note that the model_file path
+      // is NOT relative to the base/input template dirs defined below.
+      // Examples: foo.thrift, or "http://example.com/models/foo.thrift"
+      #model_file: "<abs_or_rel_path_or_url>",
+      
+      // base location of template files (or other generator input). may be 
+      // absolute or relative path, or url. relative path will be appended
+      // to CWD.
+      #base_input_dir: "<abs_or_rel_path_or_url>",
+                                              
+      // base location of generated files. may be absolute or relative path.
+      // relative path will be appended to CWD.
+      #base_output_dir: "<abs_or_rel_path>",
+                                                 
+
+      // default charset is UTF8. it's up to generators to adhere to
+      // harset specification.
+      output_charset: UTF8,
+                                                 
+      // the default target(s) to execute, if any. may be single target or
+      // list of targets. if none specified here or on command line, the
+      // default target is "all", which will execute all targets.
+      // pro-tip: don't use "all" as a target name.
+      // Examples: target: java, or target: [java, cpp, foo]
+      #target: all,
+       
+    }, // end global options
+    
+    // params are passed to templates. they determine the behavior of templates,
+    // and will mostly be specified in narrower (target/generator) scopes.
+    // there are no predefined param names; they must agree with whatever
+    // the templates expect.
+    params:
+    {
+      debug: true,
+      doc_comments: false,
+      my_app_version: "1.0.1",
+    },
+    
+    // helper classes are instantiated and passed to templates. some, like this
+    // one, may be globally useful, while others will be specified within
+    // narrower target/generator scopes.
+    helper_classes: {
+      util: org.runningreds.horatio.generator.GenUtil,
+    },
+    
+  }, // end global section
+  
+  // targets are labeled execution units, similar to ant targets. they are
+  // executed conditionally based on the "target" command-line option, or
+  // may be specified above in the global options section. any number of
+  // targets may be defined.
+  targets: 
+  {
+    // example "java" target. note that this could be called anything; the
+    // label "java" has no special significance. you could generate ruby here.
+    java:
+    {
+      // the target inherits any global options, adding to or overriding them here.
+      // target options are directives to generators, and are mostly concerned
+      // with where to find/put files, and how to encode them.
+      options: 
+      {
+        // location of template files (or other generator input). if relative,
+        // and base specified, will be appended to base. otherwise, relative
+        // path will be appended to CWD.
+        #input_dir: "<abs_or_rel_path_or_url>",
+                                                 
+        // location of generated files. if relative, and base specified, will
+        // be appended to base. otherwise, relative path will be appended
+        // to CWD.
+        #output_dir: "<abs_or_rel_path>",
+        
+        // Thrift namespace to use. for some namespaces, will further determine
+        // the output directory.
+        namespace: java,  // adds java package name structure below output dir
+      },
+      
+      // the target inherits any global params, adding to or overriding them
+      // here. note that param names have meaning primarily to templates that
+      // use them, so may be called whatever you like, though conventions might
+      // eventually arise.
+      params:
+      {
+        primitive_list_impl: array,  // (array | list) // FOR EXAMPLE
+      },
+      
+      // the target inherits any global helpers, adding to or overriding them here.
+      // again, the name has meaning only to templates (or conceivably future
+      // non-template generators). a helper object's methods are accessible to
+      // templates, and may do anything, though typically they will help to
+      // format text.
+      helper_classes:
+      {
+        jutil: org.example.JavaUtils,
+      },
+      
+      // generators are the actual code generation units for a target. any
+      // number of generators may be specified in the array. generators
+      // are run in the order specified. if you wanted to generate a file for
+      // each of Thrift's model elements, you would define four generators:
+      // one each for constants, enums, structs and services. see the iterate
+      // directive below for more details.
+      generators:
+      [
+        // sample generator
+        {
+          
+          // the generator inherits any global/target options, adding to or
+          // overriding them here.
+          options:
+          {
+            input_dir: "<abs_or_rel_path>",
+            #output_dir: "<abs_or_rel_path>",
+          },
+          
+          // the generator inherits any global/target params, adding to or
+          // overriding them here.
+          params:
+          {
+            package: my.package.name,
+          },
+          
+          // the generator inherits any global/target helpers, adding to or
+          // overriding them here.
+          helper_classes: {
+            myjutil: org.myorg.MyJavaUtils,
+          },
+          
+          // the generator class to execute. generators must implement interface
+          // com.runningreds.horatio.generator.Generator. The default
+          // VelocityGenerator generates code using Velocity templates.
+          generator_class: org.runningreds.horatio.generator.VelocityGenerator,
+          
+          // template to be passed to the generator. the generator will set
+          // the model, params and helpers in the template's environment, as
+          // well as the active struct, enum or service when iterating over
+          // those (see iterate below)
+          template: "my-thrift-artifact.vm",
+          
+          // the iterate directive specifies how a generator will process
+          // the model. 
+          //
+          // iterate:none generates a single output file, which must be
+          // specified by the filename directive. this might be used, for
+          // example, to create a constants class, or some other one-off file.
+          //
+          // iterate:struct iterates over structs, generating an output
+          // file for each struct. each output file name will be based on the
+          // struct name, modified by the values of the filename_case, 
+          // filename_prefix, and filename_suffix directives.
+          //
+          // iterate:enum iterates over enums, generating an output file 
+          // for each enum. files will be named as specified above for structs.
+          //
+          // iterate:service iterates over services, generating an output file
+          // for each service. files will be named as specified above for structs.
+          iterate: struct, // (struct | enum | service | none)
+          
+          // filename for single output file. only valid for iterate:none.         
+          #filename: <filename>,  // e.g., Constants.java
+          
+          // file naming rules used by iterate:struct, iterate:enum and iterate:service.
+          // for struct my_struct, the rules below would give filename S_MyStruct.java.
+          filename_prefix: S_,
+          filename_suffix: ".java",
+          filename_case: CamelCase, // (CamelCase | underscore_case)
+
+        }, // end of first "java" generator, aka java[0]
+      
+        // add more "java" generators here
+      
+      ], // end "java" generators
+      
+    }, // end "java" target
+    
+    // add more targets here
+    
+  }, // end targets section
+  
+} // end genspec
